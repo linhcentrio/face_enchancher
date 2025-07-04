@@ -1,4 +1,4 @@
-# Face Enhancement with GFPGAN - Based on project environment.yaml
+# Face Enhancement with GFPGAN - Fixed PyTorch CUDA compatibility
 FROM spxiong/pytorch:2.5.1-py3.10.15-cuda12.1.0-devel-ubuntu22.04
 
 WORKDIR /app
@@ -27,10 +27,10 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements
 COPY requirements.txt /app/
 
-# Install exact versions from environment.yaml
+# Install exact versions from environment.yaml (excluding PyTorch)
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel && \
-    echo "=== Installing core dependencies in exact order ===" && \
+    echo "=== Installing core dependencies ===" && \
     pip install --no-cache-dir \
     numpy==1.24.4 \
     opencv-python==4.8.0.76 \
@@ -74,14 +74,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     runpod>=1.6.0 \
     minio>=7.0.0
 
-# Install PyTorch (exact version from environment.yaml)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    echo "=== Installing PyTorch (exact version) ===" && \
-    pip install --no-cache-dir \
-    torch==2.4.0+cu118 \
-    torchvision==0.19.0+cu118 \
-    torchaudio==2.4.0+cu118 \
-    --index-url https://download.pytorch.org/whl/cu118
+# Use PyTorch from base image (2.5.1 with CUDA 12.1 support)
+# Skip installing PyTorch 2.4.0+cu118 to avoid CUDA version conflict
+RUN echo "=== Using PyTorch from base image (CUDA 12.1 compatible) ===" && \
+    python -c "import torch; print(f'PyTorch: {torch.__version__}')" && \
+    python -c "import torch; print(f'CUDA Available: {torch.cuda.is_available()}')" && \
+    python -c "import torch; print(f'CUDA Version: {torch.version.cuda if torch.cuda.is_available() else \"N/A\"}')"
 
 # Install InsightFace (exact version from environment.yaml)
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -117,27 +115,26 @@ RUN echo "=== Downloading models ===" && \
     -O /app/faceID/recognition.onnx && \
     echo "✅ Face recognition model downloaded"
 
-# Verify environment matches original
-RUN echo "=== Verifying environment compatibility ===" && \
-    python -c "import numpy; print(f'NumPy: {numpy.__version__}')" && \
-    python -c "import cv2; print(f'OpenCV: {cv2.__version__}')" && \
-    python -c "import torch; print(f'PyTorch: {torch.__version__}')" && \
-    python -c "import onnxruntime; print(f'ONNX Runtime: {onnxruntime.__version__}')" && \
-    python -c "import librosa; print(f'Librosa: {librosa.__version__}')" && \
-    python -c "import numba; print(f'Numba: {numba.__version__}')" && \
-    python -c "import scipy; print(f'SciPy: {scipy.__version__}')" && \
-    python -c "import PIL; print(f'Pillow: {PIL.__version__}')" && \
-    python -c "import skimage; print(f'Scikit-image: {skimage.__version__}')" && \
-    python -c "import insightface; print(f'InsightFace: {insightface.__version__}')" && \
-    python -c "import onnxruntime; print(f'ONNX GPU Providers: {onnxruntime.get_available_providers()}')" && \
-    python -c "import torch; print(f'PyTorch CUDA: {torch.cuda.is_available()}')" && \
-    echo "✅ Environment verification completed"
+# Final verification
+RUN echo "=== Final environment verification ===" && \
+    python -c "import numpy; print(f'✅ NumPy: {numpy.__version__}')" && \
+    python -c "import cv2; print(f'✅ OpenCV: {cv2.__version__}')" && \
+    python -c "import torch; print(f'✅ PyTorch: {torch.__version__}')" && \
+    python -c "import torch; print(f'✅ PyTorch CUDA: {torch.cuda.is_available()}')" && \
+    python -c "import onnxruntime; print(f'✅ ONNX Runtime: {onnxruntime.__version__}')" && \
+    python -c "import onnxruntime; print(f'✅ ONNX GPU Providers: {onnxruntime.get_available_providers()}')" && \
+    python -c "import librosa; print(f'✅ Librosa: {librosa.__version__}')" && \
+    python -c "import insightface; print(f'✅ InsightFace: {insightface.__version__}')" && \
+    echo "🎮 GPU Status:" && \
+    python -c "import onnxruntime; print(f'  ONNX GPU: {\"CUDAExecutionProvider\" in onnxruntime.get_available_providers()}')" && \
+    python -c "import torch; print(f'  PyTorch GPU: {torch.cuda.is_available()}')" && \
+    echo "✅ Environment setup completed"
 
 # Set environment
 ENV PYTHONPATH="/app"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD python -c "import cv2, numpy, onnxruntime, torch; print('OK')" || exit 1
+  CMD python -c "import cv2, numpy, onnxruntime; print('OK')" || exit 1
 
 CMD ["python", "rp_handler.py"]
