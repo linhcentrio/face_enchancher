@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-RunPod Serverless Handler for GFPGAN Face Enhancement
-EXACT COPY of enhancer_cli.py logic - NO excessive logging
+RunPod Serverless Handler - EXACT COPY of enhancer_cli.py logic
 """
 
 import runpod
@@ -10,36 +9,31 @@ import tempfile
 import uuid
 import requests
 import logging
-import time
 import subprocess
 from pathlib import Path
 from minio import Minio
 from urllib.parse import quote
 from datetime import datetime
 
-# Minimal imports - như enhancer_cli.py
+# EXACT imports như enhancer_cli.py
 import numpy as np
 import cv2
 import sys
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
-import gc
 import onnxruntime
+
+# Suppress ONNX warnings như gốc
+onnxruntime.set_default_logger_severity(3)
 
 # Add path for local modules
 sys.path.append('/app')
 
 # Import face processing modules
-try:
-    from utils.retinaface import RetinaFace
-    from utils.face_alignment import get_cropped_head_256
-    from enhancers.GFPGAN.GFPGAN import GFPGAN
-    from faceID.faceID import FaceRecognition
-except ImportError as e:
-    logging.error(f"Import error: {e}")
-    sys.exit(1)
+from utils.retinaface import RetinaFace
+from utils.face_alignment import get_cropped_head_256
+from faceID.faceID import FaceRecognition
 
-# MINIMAL logging
+# Configure minimal logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -52,79 +46,78 @@ MINIO_SECURE = False
 
 minio_client = Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=MINIO_SECURE)
 
-# Global model instances
-detector = None
-enhancer = None
-recognition = None
+# GLOBAL model initialization như enhancer_cli.py
+detector = RetinaFace(
+    "/app/utils/scrfd_2.5g_bnkps.onnx",
+    provider=[
+        ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "DEFAULT"}),
+        "CPUExecutionProvider"
+    ],
+    session_options=None
+)
 
+recognition = FaceRecognition('/app/faceID/recognition.onnx')
+
+# Load the specified enhancer model - EXACT COPY
 def load_enhancer(enhancer_name, device):
-    """EXACT COPY from enhancer_cli.py"""
-    if enhancer_name == 'gfpgan':
+    if enhancer_name == 'gpen':
+        from enhancers.GPEN.GPEN import GPEN
+        return GPEN(model_path="/app/enhancers/GPEN/GPEN-BFR-256-sim.onnx", device=device)
+    elif enhancer_name == 'codeformer':
+        from enhancers.Codeformer.Codeformer import CodeFormer
+        return CodeFormer(model_path="/app/enhancers/Codeformer/codeformerfixed.onnx", device=device)
+    elif enhancer_name == 'restoreformer':
+        from enhancers.restoreformer.restoreformer16 import RestoreFormer
+        return RestoreFormer(model_path="/app/enhancers/restoreformer/restoreformer16.onnx", device=device)
+    elif enhancer_name == 'gfpgan':
         from enhancers.GFPGAN.GFPGAN import GFPGAN
-        return GFPGAN(model_path="enhancers/GFPGAN/GFPGANv1.4.onnx", device=device)
+        return GFPGAN(model_path="/app/enhancers/GFPGAN/GFPGANv1.4.onnx", device=device)
     else:
         raise ValueError(f"Unknown enhancer: {enhancer_name}")
 
+# Process a batch of frames - EXACT COPY (NO ThreadPoolExecutor)
 def process_batch(frame_buffer, enhancer, face_mask, out, frame_width, frame_height):
-    """EXACT COPY from enhancer_cli.py - NO LOGGING"""
     frames, aligned_faces, mats = zip(*frame_buffer)
 
-    # Chuyển thành numpy array để xử lý batch
-    aligned_faces_array = np.array(aligned_faces)
+    # Enhance faces in batch
+    enhanced_faces = enhancer.enhance_batch(aligned_faces)
 
-    # Nâng cao khuôn mặt theo batch
-    enhanced_faces = enhancer.enhance_batch(aligned_faces_array)
-
-    # Xử lý từng frame
-    def process_single_frame(data):
-        frame, aligned_face, mat, enhanced_face = data
-
-        # Resize enhanced face
+    for frame, aligned_face, mat, enhanced_face in zip(frames, aligned_faces, mats, enhanced_faces):
+        # Resize enhanced face back to the original size of aligned face
         enhanced_face_resized = cv2.resize(enhanced_face, (aligned_face.shape[1], aligned_face.shape[0]))
 
-        # Resize face mask
+        # Resize face mask to match the size of enhanced face
         face_mask_resized = cv2.resize(face_mask, (enhanced_face_resized.shape[1], enhanced_face_resized.shape[0]))
 
-        # Trộn enhanced face vào aligned face
+        # Blend enhanced face back into the original frame
         blended_face = (face_mask_resized * enhanced_face_resized + (1 - face_mask_resized) * aligned_face).astype(np.uint8)
 
-        # Warp face trở lại vị trí gốc
+        # Warp blended face back to original frame
         mat_rev = cv2.invertAffineTransform(mat)
         dealigned_face = cv2.warpAffine(blended_face, mat_rev, (frame_width, frame_height))
 
-        # Áp dụng mặt nạ để blend vào frame gốc
         mask = cv2.warpAffine(face_mask_resized, mat_rev, (frame_width, frame_height))
         final_frame = (mask * dealigned_face + (1 - mask) * frame).astype(np.uint8)
 
-        return final_frame
-
-    # Xử lý đa luồng với ThreadPoolExecutor
-    frame_data = zip(frames, aligned_faces, mats, enhanced_faces)
-
-    with ThreadPoolExecutor() as executor:
-        final_frames = list(executor.map(process_single_frame, frame_data))
-
-    # Ghi các frame đã xử lý ra video
-    for final_frame in final_frames:
         out.write(final_frame)
 
-def enhance_video(video_path, enhancer_name, output_path, user_batch_size=0):
-    """EXACT COPY from enhancer_cli.py logic"""
+# Enhance the video - EXACT COPY
+def enhance_video(video_path, enhancer_name, output_path=None):
     device = 'cpu'
     if onnxruntime.get_device() == 'GPU':
         device = 'cuda'
 
     print(f"Running on {device}")
 
-    # Tải enhancer
+    # Load enhancer
     enhancer = load_enhancer(enhancer_name, device)
 
-    # Mở video stream
+    # Open the video stream
     video_stream = cv2.VideoCapture(video_path)
     if not video_stream.isOpened():
         raise ValueError(f"Failed to open video file: {video_path}")
 
-    # Lấy thuộc tính video
+    # Get video properties
     fps = video_stream.get(cv2.CAP_PROP_FPS)
     frame_width = int(video_stream.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(video_stream.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -133,84 +126,49 @@ def enhance_video(video_path, enhancer_name, output_path, user_batch_size=0):
     if output_path is None:
         output_path = os.path.join('outputs', os.path.basename(video_path).replace('.', f'_{enhancer_name}.'))
 
-    # Tạo file tạm có tên đặc biệt để tránh trùng lặp
-    base_name = os.path.splitext(output_path)[0]
-    extension = os.path.splitext(output_path)[1]
-    temp_video_path = f"{base_name}_temp_video{extension}"
-    final_output_path = f"{base_name}_final{extension}"
+    # Temporary video file without audio
+    temp_video_path = output_path.replace('.', '_temp.')
 
-    # Tạo video writer
-    out = cv2.VideoWriter(temp_video_path, cv2.VideoWriter_fourcc('m', 'p', '4', 'v'), fps, (frame_width, frame_height))
+    # Create video writer with correct FPS
+    out = cv2.VideoWriter(temp_video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
 
-    # Tính toán mặt nạ khuôn mặt
+    # Precompute face mask
     face_mask = np.zeros((256, 256), dtype=np.uint8)
     face_mask = cv2.rectangle(face_mask, (66, 69), (190, 240), (255, 255, 255), -1)
     face_mask = cv2.GaussianBlur(face_mask.astype(np.uint8), (19, 19), cv2.BORDER_DEFAULT)
     face_mask = cv2.cvtColor(face_mask, cv2.COLOR_GRAY2RGB)
     face_mask = face_mask / 255
 
-    # Xác định batch size tối ưu - EXACT LOGIC
-    if user_batch_size > 0:
-        batch_size = user_batch_size
-    else:
-        if device == 'cuda':
-            if hasattr(enhancer, 'recommended_batch_size'):
-                batch_size = enhancer.recommended_batch_size
-            elif enhancer_name == 'gfpgan':
-                batch_size = 1  # GFPGAN có vấn đề với batch > 1
-            else:
-                batch_size = 8   # Giá trị mặc định an toàn
-        else:
-            batch_size = 1  # Trên CPU nên giữ batch nhỏ
+    batch_size = 1  # Adjust batch size based on memory and performance
+    frame_buffer = []
 
-    print(f"Using batch size: {batch_size}")
+    for _ in tqdm(range(total_frames), desc="Processing frames"):
+        ret, frame = video_stream.read()
+        if not ret:
+            break
 
-    # Xử lý video theo đoạn để tối ưu bộ nhớ
-    MAX_FRAMES_IN_MEMORY = 1000  # Điều chỉnh theo RAM có sẵn
+        # Detect and align face
+        bboxes, kpss = detector.detect(frame, input_size=(320, 320), det_thresh=0.3)
+        if len(kpss) == 0:
+            out.write(frame)
+            continue
 
-    try:
-        for frame_idx in tqdm(range(0, total_frames, MAX_FRAMES_IN_MEMORY), desc="Xử lý theo đoạn"):
-            chunk_frames = min(MAX_FRAMES_IN_MEMORY, total_frames - frame_idx)
+        aligned_face, mat = get_cropped_head_256(frame, kpss[0], size=256, scale=1.0)
+        frame_buffer.append((frame, aligned_face, mat))
+
+        if len(frame_buffer) >= batch_size:
+            process_batch(frame_buffer, enhancer, face_mask, out, frame_width, frame_height)
             frame_buffer = []
 
-            for _ in tqdm(range(chunk_frames), desc="Đọc frames"):
-                ret, frame = video_stream.read()
-                if not ret:
-                    break
+    # Process remaining frames in the buffer
+    if frame_buffer:
+        process_batch(frame_buffer, enhancer, face_mask, out, frame_width, frame_height)
 
-                # Phát hiện khuôn mặt
-                bboxes, kpss = detector.detect(frame, input_size=(320, 320), det_thresh=0.3)
-                if len(kpss) == 0:
-                    out.write(frame)
-                    continue
+    video_stream.release()
+    out.release()
+    print(f"Enhanced video frames saved to {temp_video_path}")
 
-                aligned_face, mat = get_cropped_head_256(frame, kpss[0], size=256, scale=1.0)
-                frame_buffer.append((frame, aligned_face, mat))
-
-                if len(frame_buffer) >= batch_size:
-                    process_batch(frame_buffer, enhancer, face_mask, out, frame_width, frame_height)
-                    frame_buffer = []
-
-            # Xử lý frame còn lại
-            if frame_buffer:
-                process_batch(frame_buffer, enhancer, face_mask, out, frame_width, frame_height)
-
-            # Dọn bộ nhớ - MINIMAL
-            gc.collect()
-            if device == 'cuda':
-                try:
-                    import torch
-                    torch.cuda.empty_cache()
-                except:
-                    pass
-    except Exception as e:
-        print(f"Lỗi xử lý video: {e}")
-        raise
-    finally:
-        video_stream.release()
-        out.release()
-
-    # Trích xuất âm thanh từ video gốc
+    # Extract audio from the original video
     audio_path = os.path.splitext(output_path)[0] + '.aac'
     try:
         subprocess.call([
@@ -220,24 +178,18 @@ def enhance_video(video_path, enhancer_name, output_path, user_batch_size=0):
         print(f"Error extracting audio: {e}")
         raise
 
-    # Kết hợp video đã xử lý với âm thanh gốc
+    # Combine the enhanced video frames with the original audio
     try:
         subprocess.call([
             'ffmpeg', '-y', '-i', temp_video_path, '-i', audio_path,
             '-c:v', 'libx264', '-crf', '23', '-preset', 'medium',
-            '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', final_output_path
+            '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', output_path
         ])
-
-        # Sau khi tạo thành công, đổi tên file final thành output cuối cùng
-        if os.path.exists(final_output_path):
-            if os.path.exists(output_path):
-                os.remove(output_path)
-            os.rename(final_output_path, output_path)
     except Exception as e:
         print(f"Error combining video and audio: {e}")
         raise
 
-    # Xóa file tạm
+    # Remove temporary files
     if os.path.exists(temp_video_path):
         os.remove(temp_video_path)
     if os.path.exists(audio_path):
@@ -319,27 +271,6 @@ def handler(job):
         }
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting GFPGAN Face Enhancement Worker...")
-    
-    # Initialize models - SIMPLE
-    try:
-        detector_path = "/app/utils/scrfd_2.5g_bnkps.onnx"
-        detector = RetinaFace(
-            detector_path,
-            provider=[
-                ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "DEFAULT"}),
-                "CPUExecutionProvider"
-            ],
-            session_options=None
-        )
-        
-        recognition_path = "/app/faceID/recognition.onnx"
-        recognition = FaceRecognition(recognition_path)
-        
-        logger.info("✅ Models initialized")
-    except Exception as e:
-        logger.error(f"Model initialization failed: {e}")
-        sys.exit(1)
-    
+    logger.info("🚀 Starting GFPGAN Face Enhancement Worker (EXACT Copy)...")
     logger.info("🎬 Ready to process requests...")
     runpod.serverless.start({"handler": handler})
