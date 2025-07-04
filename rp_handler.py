@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RunPod Serverless Handler for GFPGAN Face Enhancement
-Simple wrapper that calls enhancer_cli.py
+GPU-optimized version with onnxruntime-gpu 1.14.1
 """
 
 import runpod
@@ -85,11 +85,16 @@ def run_gfpgan_enhancement(video_path: str, output_path: str) -> bool:
             "--output_path", output_path
         ]
         
+        # Set environment variables for GPU usage
+        env = os.environ.copy()
+        env['CUDA_VISIBLE_DEVICES'] = '0'
+        
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=1800  # 30 minutes timeout
+            timeout=1800,  # 30 minutes timeout
+            env=env
         )
         
         if result.returncode == 0:
@@ -173,8 +178,49 @@ def handler(job):
             "job_id": job_id
         }
 
+def verify_gpu_support():
+    """Verify GPU support for ONNX Runtime"""
+    try:
+        import onnxruntime
+        providers = onnxruntime.get_available_providers()
+        
+        if 'CUDAExecutionProvider' in providers:
+            logger.info("✅ CUDA Execution Provider available")
+            return True
+        else:
+            logger.warning("⚠️ CUDA Execution Provider not available")
+            logger.info(f"Available providers: {providers}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ GPU verification failed: {e}")
+        return False
+
 if __name__ == "__main__":
-    logger.info("🚀 Starting GFPGAN Face Enhancement Worker...")
+    logger.info("🚀 Starting GFPGAN Face Enhancement Worker (GPU-optimized)...")
+    
+    # Verify environment
+    try:
+        import numpy
+        import cv2
+        import torch
+        import onnxruntime
+        
+        logger.info(f"✅ NumPy: {numpy.__version__}")
+        logger.info(f"✅ OpenCV: {cv2.__version__}")
+        logger.info(f"✅ PyTorch: {torch.__version__}")
+        logger.info(f"✅ ONNX Runtime: {onnxruntime.__version__}")
+        logger.info(f"✅ PyTorch CUDA: {torch.cuda.is_available()}")
+        
+        # Verify GPU support
+        gpu_available = verify_gpu_support()
+        if gpu_available:
+            logger.info("🎮 GPU acceleration enabled")
+        else:
+            logger.warning("⚠️ Running on CPU mode")
+            
+    except Exception as e:
+        logger.error(f"❌ Environment check failed: {e}")
     
     # Verify models exist
     required_models = [
