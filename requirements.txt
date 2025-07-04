@@ -4,5 +4,14 @@ tqdm
 librosa
 numba
 imutils
-#insightface==0.7.3
-onnxruntime==1.14.1
+onnxruntime-gpu==1.21.0
+runpod>=1.6.0
+minio>=7.0.0
+requests
+scikit-image
+Pillow
+matplotlib
+scipy
+easydict
+cython
+insightface==0.7.3
