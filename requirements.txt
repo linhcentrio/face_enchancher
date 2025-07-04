@@ -1,33 +1,51 @@
-# Fix NumPy compatibility issue
-numpy==1.26.4
+# Core dependencies - exact versions from environment.yaml
+numpy==1.24.4
 opencv-python==4.8.0.76
-opencv-contrib-python
+opencv-contrib-python==4.11.0.86
+opencv-python-headless==4.11.0.86
+tqdm==4.67.1
+requests==2.28.1
 
-# Core dependencies
-#torch>=2.0.0
-tqdm==4.66.1
-requests>=2.28.0
-
-# ONNX Runtime
+# ONNX Runtime GPU - exact version from environment.yaml
 onnxruntime-gpu==1.14.1
 
-# RunPod and Storage
+# Audio processing - exact versions
+librosa==0.11.0
+numba==0.61.0
+soundfile==0.13.1
+soxr==0.5.0.post1
+audioread==3.0.1
+
+# Image processing - exact versions
+scikit-image==0.25.2
+Pillow==11.0.0
+matplotlib==3.10.1
+scipy==1.15.2
+imutils==0.5.4
+imageio==2.37.0
+
+# InsightFace and dependencies - exact versions
+insightface==0.7.3
+easydict==1.13
+cython==3.0.12
+
+# PyTorch (already in base image, but specify for completeness)
+#torch==2.4.0+cu118
+#torchvision==0.19.0+cu118
+#torchaudio==2.4.0+cu118
+
+# RunPod and Storage (not in environment.yaml, but needed)
 runpod>=1.6.0
 minio>=7.0.0
 
-# Image processing (with compatible versions)
-scikit-image==0.21.0
-Pillow>=9.0.0,<10.0.0
-matplotlib>=3.5.0,<4.0.0
-scipy>=1.8.0,<2.0.0
-
-# InsightFace dependencies
-easydict>=1.9
-cython>=0.29.0
-
-# Audio processing
-librosa==0.10.1
-numba==0.58.1
-
-# Utilities
-imutils==0.5.4
+# Other utilities from environment.yaml
+ffmpeg-python==0.2.0
+joblib==1.4.2
+networkx==3.3
+packaging==24.2
+python-dateutil==2.9.0.post0
+pyyaml==6.0.2
+six==1.17.0
+sympy==1.13.1
+typing-extensions==4.12.2
+urllib3==1.26.13
