@@ -1,6 +1,7 @@
 # Fix NumPy compatibility issue
 numpy==1.26.4
 opencv-python==4.8.0.76
+opencv-contrib-python
 
 # Core dependencies
 #torch>=2.0.0
