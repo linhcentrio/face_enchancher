@@ -1,17 +1,32 @@
+# Fix NumPy compatibility issue
+numpy==1.26.4
 opencv-python==4.8.0.76
-numpy
-tqdm
-librosa
-numba
-imutils
+
+# Core dependencies
+torch>=2.0.0
+tqdm==4.66.1
+requests>=2.28.0
+
+# ONNX Runtime
 onnxruntime-gpu==1.21.0
+
+# RunPod and Storage
 runpod>=1.6.0
 minio>=7.0.0
-requests
-scikit-image
-Pillow
-matplotlib
-scipy
-easydict
-cython
-insightface==0.7.3
+
+# Image processing (with compatible versions)
+scikit-image==0.21.0
+Pillow>=9.0.0,<10.0.0
+matplotlib>=3.5.0,<4.0.0
+scipy>=1.8.0,<2.0.0
+
+# InsightFace dependencies
+easydict>=1.9
+cython>=0.29.0
+
+# Audio processing
+librosa==0.10.1
+numba==0.58.1
+
+# Utilities
+imutils==0.5.4
