@@ -3,6 +3,10 @@ FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 WORKDIR /app
 
+# Thiết lập noninteractive để tránh prompt khi cài tzdata
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+
 # Cài đặt các thư viện hệ thống cần thiết
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -40,9 +44,9 @@ RUN mkdir -p /app/enhancers/GFPGAN /app/utils /app/faceID /app/outputs && \
         wget -O /app/faceID/recognition.onnx "https://huggingface.co/manh-linh/faceID_recognition/resolve/main/recognition.onnx"; \
     fi
 
-# Thiết lập biến môi trường CUDA (nếu cần)
+# Thiết lập biến môi trường CUDA và Python
 ENV CUDA_VISIBLE_DEVICES=0
 ENV PYTHONUNBUFFERED=1
 
-# Lệnh mặc định khi chạy container (có thể thay đổi tùy mục đích)
+# Lệnh mặc định khi chạy container (có thể sửa thành enhancer_cli.py nếu muốn)
 CMD ["python", "rp_handler.py"]
