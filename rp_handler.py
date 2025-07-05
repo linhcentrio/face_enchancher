@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-RunPod Serverless Handler - EXACT COPY of enhancer_cli.py logic
+RunPod Serverless Handler for GFPGAN Face Enhancement
+Production Optimized - EXACT Copy of enhancer_cli.py logic
+Performance Target: 3.8-4.0 FPS (match local environment)
 """
 
 import runpod
@@ -10,31 +12,36 @@ import uuid
 import requests
 import logging
 import subprocess
+import time
 from pathlib import Path
 from minio import Minio
 from urllib.parse import quote
 from datetime import datetime
 
-# EXACT imports như enhancer_cli.py
+# EXACT imports like enhancer_cli.py
 import numpy as np
 import cv2
 import sys
 from tqdm import tqdm
 import onnxruntime
 
-# Suppress ONNX warnings như gốc
+# Suppress ONNX warnings like original
 onnxruntime.set_default_logger_severity(3)
 
 # Add path for local modules
 sys.path.append('/app')
 
 # Import face processing modules
-from utils.retinaface import RetinaFace
-from utils.face_alignment import get_cropped_head_256
-from faceID.faceID import FaceRecognition
+try:
+    from utils.retinaface import RetinaFace
+    from utils.face_alignment import get_cropped_head_256
+    from faceID.faceID import FaceRecognition
+except ImportError as e:
+    print(f"Import error: {e}")
+    sys.exit(1)
 
-# Configure minimal logging
-logging.basicConfig(level=logging.INFO)
+# Configure minimal logging for performance
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
 # MinIO Configuration
@@ -44,9 +51,18 @@ MINIO_SECRET_KEY = "fCFngM7YTr6jSkBKXZ9BkfDdXrStYXm43UGa0OZQ"
 MINIO_BUCKET = "aiclipdfl"
 MINIO_SECURE = False
 
-minio_client = Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=MINIO_SECURE)
+# Initialize MinIO client
+minio_client = Minio(
+    MINIO_ENDPOINT,
+    access_key=MINIO_ACCESS_KEY,
+    secret_key=MINIO_SECRET_KEY,
+    secure=MINIO_SECURE
+)
 
-# GLOBAL model initialization như enhancer_cli.py
+# GLOBAL model initialization like enhancer_cli.py - PERFORMANCE CRITICAL
+print("🤖 Initializing global models...")
+
+# Face detection model initialization - EXACT COPY
 detector = RetinaFace(
     "/app/utils/scrfd_2.5g_bnkps.onnx",
     provider=[
@@ -56,10 +72,13 @@ detector = RetinaFace(
     session_options=None
 )
 
+# Face recognition model initialization - EXACT COPY  
 recognition = FaceRecognition('/app/faceID/recognition.onnx')
 
-# Load the specified enhancer model - EXACT COPY
+print("✅ Global models initialized")
+
 def load_enhancer(enhancer_name, device):
+    """Load the specified enhancer model - EXACT COPY"""
     if enhancer_name == 'gpen':
         from enhancers.GPEN.GPEN import GPEN
         return GPEN(model_path="/app/enhancers/GPEN/GPEN-BFR-256-sim.onnx", device=device)
@@ -75,13 +94,14 @@ def load_enhancer(enhancer_name, device):
     else:
         raise ValueError(f"Unknown enhancer: {enhancer_name}")
 
-# Process a batch of frames - EXACT COPY (NO ThreadPoolExecutor)
 def process_batch(frame_buffer, enhancer, face_mask, out, frame_width, frame_height):
+    """Process a batch of frames - EXACT COPY (NO ThreadPoolExecutor for performance)"""
     frames, aligned_faces, mats = zip(*frame_buffer)
 
     # Enhance faces in batch
     enhanced_faces = enhancer.enhance_batch(aligned_faces)
 
+    # Simple for loop - NO threading overhead like original
     for frame, aligned_face, mat, enhanced_face in zip(frames, aligned_faces, mats, enhanced_faces):
         # Resize enhanced face back to the original size of aligned face
         enhanced_face_resized = cv2.resize(enhanced_face, (aligned_face.shape[1], aligned_face.shape[0]))
@@ -101,8 +121,8 @@ def process_batch(frame_buffer, enhancer, face_mask, out, frame_width, frame_hei
 
         out.write(final_frame)
 
-# Enhance the video - EXACT COPY
 def enhance_video(video_path, enhancer_name, output_path=None):
+    """Enhance the video - EXACT COPY of enhancer_cli.py"""
     device = 'cpu'
     if onnxruntime.get_device() == 'GPU':
         device = 'cuda'
@@ -139,9 +159,10 @@ def enhance_video(video_path, enhancer_name, output_path=None):
     face_mask = cv2.cvtColor(face_mask, cv2.COLOR_GRAY2RGB)
     face_mask = face_mask / 255
 
-    batch_size = 1  # Adjust batch size based on memory and performance
+    batch_size = 1  # GFPGAN batch size is always 1
     frame_buffer = []
 
+    # Simple frame processing loop - NO chunking for performance
     for _ in tqdm(range(total_frames), desc="Processing frames"):
         ret, frame = video_stream.read()
         if not ret:
@@ -198,27 +219,42 @@ def enhance_video(video_path, enhancer_name, output_path=None):
     print(f"Enhanced video with original audio saved to {output_path}")
 
 def download_file(url: str, local_path: str) -> bool:
+    """Download file from URL with minimal logging"""
     try:
         response = requests.get(url, stream=True, timeout=300)
         response.raise_for_status()
+        
         with open(local_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
+        
+        file_size = os.path.getsize(local_path) / (1024 * 1024)
+        print(f"Downloaded: {file_size:.1f} MB")
         return True
+        
     except Exception as e:
         logger.error(f"Download failed: {e}")
         return False
 
 def upload_to_minio(local_path: str, object_name: str) -> str:
+    """Upload file to MinIO storage"""
     try:
+        file_size = os.path.getsize(local_path) / (1024 * 1024)
+        print(f"Uploading: {file_size:.1f} MB")
+        
         minio_client.fput_object(MINIO_BUCKET, object_name, local_path)
-        return f"http://{MINIO_ENDPOINT}/{MINIO_BUCKET}/{quote(object_name)}"
+        file_url = f"http://{MINIO_ENDPOINT}/{MINIO_BUCKET}/{quote(object_name)}"
+        
+        print("Upload successful")
+        return file_url
+        
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         raise e
 
 def handler(job):
+    """Main RunPod handler - optimized for performance"""
     job_id = job.get("id", "unknown")
     start_time = time.time()
     
@@ -227,42 +263,81 @@ def handler(job):
         video_url = job_input.get("video_url")
         
         if not video_url:
-            return {"error": "Missing video_url"}
+            return {"error": "Missing video_url parameter"}
         
-        logger.info(f"🚀 Job {job_id}: GFPGAN Face Enhancement")
+        # Optional parameters
+        enhancer_name = job_input.get("enhancer", "gfpgan")  # Default to GFPGAN
+        
+        logger.info(f"🚀 Job {job_id}: {enhancer_name.upper()} Face Enhancement")
+        logger.info(f"📺 Video URL: {video_url}")
         
         with tempfile.TemporaryDirectory() as temp_dir:
+            # File paths
             video_path = os.path.join(temp_dir, "input.mp4")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(temp_dir, f"enhanced_{timestamp}.mp4")
             
-            # Download video
+            # Step 1: Download input video
+            logger.info("📥 Step 1/3: Downloading video...")
             if not download_file(video_url, video_path):
-                return {"error": "Failed to download video"}
+                return {"error": "Failed to download input video"}
             
-            # Enhance video - EXACT như enhancer_cli.py
-            enhance_video(video_path, "gfpgan", output_path)
+            # Verify video file
+            if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+                return {"error": "Downloaded video file is empty or corrupted"}
             
-            if not os.path.exists(output_path):
-                return {"error": "Enhancement output not found"}
+            # Step 2: Enhance video using EXACT enhancer_cli.py logic
+            logger.info(f"✨ Step 2/3: Enhancing video with {enhancer_name.upper()}...")
             
-            # Upload result
-            output_filename = f"gfpgan_enhanced_{job_id}_{uuid.uuid4().hex[:8]}.mp4"
-            output_url = upload_to_minio(output_path, output_filename)
+            try:
+                # Call the enhance_video function - EXACT like enhancer_cli.py
+                enhance_video(video_path, enhancer_name, output_path)
+                
+                if not os.path.exists(output_path):
+                    return {"error": "Enhancement failed - no output file generated"}
+                
+                # Check output file size
+                output_size = os.path.getsize(output_path)
+                if output_size == 0:
+                    return {"error": "Enhancement failed - output file is empty"}
+                
+                logger.info(f"✅ Enhancement completed: {output_size / (1024*1024):.1f} MB")
+                
+            except Exception as e:
+                logger.error(f"❌ Enhancement failed: {e}")
+                return {"error": f"Enhancement processing failed: {str(e)}"}
             
+            # Step 3: Upload result to MinIO
+            logger.info("📤 Step 3/3: Uploading enhanced video...")
+            
+            try:
+                output_filename = f"enhanced_{enhancer_name}_{job_id}_{uuid.uuid4().hex[:8]}.mp4"
+                output_url = upload_to_minio(output_path, output_filename)
+                
+            except Exception as e:
+                logger.error(f"❌ Upload failed: {e}")
+                return {"error": f"Upload failed: {str(e)}"}
+            
+            # Calculate processing time
             processing_time = time.time() - start_time
             
-            return {
+            # Prepare success response
+            response = {
                 "status": "completed",
                 "output_video_url": output_url,
                 "processing_time_seconds": round(processing_time, 2),
-                "enhancer_used": "gfpgan",
-                "job_id": job_id
+                "enhancer_used": enhancer_name,
+                "job_id": job_id,
+                "file_size_mb": round(os.path.getsize(output_path) / (1024*1024), 2)
             }
+            
+            logger.info(f"✅ Job {job_id} completed successfully in {processing_time:.2f}s")
+            return response
             
     except Exception as e:
         processing_time = time.time() - start_time
-        logger.error(f"Job {job_id} failed: {e}")
+        logger.error(f"❌ Job {job_id} failed: {e}")
+        
         return {
             "status": "failed",
             "error": str(e),
@@ -271,6 +346,56 @@ def handler(job):
         }
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting GFPGAN Face Enhancement Worker (EXACT Copy)...")
-    logger.info("🎬 Ready to process requests...")
+    logger.info("🚀 Starting GFPGAN Face Enhancement Serverless Worker...")
+    logger.info("🎯 Performance Target: 3.8-4.0 FPS (optimized)")
+    
+    # Environment verification
+    try:
+        logger.info(f"🐍 Python: {sys.version}")
+        
+        import torch
+        logger.info(f"🔥 PyTorch: {torch.__version__}")
+        logger.info(f"⚡ CUDA Available: {torch.cuda.is_available()}")
+        
+        if torch.cuda.is_available():
+            logger.info(f"🎮 GPU: {torch.cuda.get_device_name()}")
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            logger.info(f"💾 GPU Memory: {gpu_memory:.1f} GB")
+        
+        logger.info(f"🔧 ONNX Runtime: {onnxruntime.__version__}")
+        providers = onnxruntime.get_available_providers()
+        logger.info(f"🎯 ONNX Providers: {providers}")
+        
+        if 'CUDAExecutionProvider' in providers:
+            logger.info("✅ GPU acceleration enabled")
+        else:
+            logger.warning("⚠️ Running on CPU mode")
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Environment check failed: {e}")
+    
+    # Verify model files exist
+    required_models = [
+        "/app/enhancers/GFPGAN/GFPGANv1.4.onnx",
+        "/app/utils/scrfd_2.5g_bnkps.onnx",
+        "/app/faceID/recognition.onnx"
+    ]
+    
+    models_ok = True
+    for model_path in required_models:
+        if os.path.exists(model_path):
+            model_size = os.path.getsize(model_path) / (1024*1024)
+            logger.info(f"✅ Model verified: {os.path.basename(model_path)} ({model_size:.1f} MB)")
+        else:
+            logger.error(f"❌ Model missing: {model_path}")
+            models_ok = False
+    
+    if not models_ok:
+        logger.error("❌ Required models missing. Exiting...")
+        sys.exit(1)
+    
+    logger.info(f"🗄️ Storage: {MINIO_ENDPOINT}/{MINIO_BUCKET}")
+    logger.info("🎬 Ready to process face enhancement requests...")
+    
+    # Start RunPod serverless worker
     runpod.serverless.start({"handler": handler})
