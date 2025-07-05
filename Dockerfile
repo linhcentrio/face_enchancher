@@ -1,42 +1,48 @@
+# Sử dụng base image PyTorch chuẩn, hỗ trợ CUDA 11.8 và Python 3.8
 FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 WORKDIR /app
 
-# Thiết lập biến môi trường CUDA
-ENV CUDA_VISIBLE_DEVICES=0
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-
-# Cài đặt các phụ thuộc hệ thống
-RUN apt-get update && apt-get install -y \
-    python3.10-dev \
-    build-essential \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libsndfile1 \
-    ffmpeg \
-    wget \
+# Cài đặt các thư viện hệ thống cần thiết
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3-dev \
+        build-essential \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender-dev \
+        libgomp1 \
+        libsndfile1 \
+        ffmpeg \
+        wget \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
-# Sao chép file môi trường và cài đặt Python dependencies
-COPY environment.yml /app/environment.yml
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir --upgrade setuptools wheel
-RUN pip install --no-cache-dir -r requirements.txt
+# Sao chép requirements.txt và cài đặt Python packages
+COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Sao chép mã nguồn
+# Sao chép toàn bộ mã nguồn vào container
 COPY . /app/
 
-# Tạo thư mục và tải model (tối ưu: chỉ tải nếu chưa tồn tại)
+# Tạo thư mục chứa model và tải model nếu chưa có
 RUN mkdir -p /app/enhancers/GFPGAN /app/utils /app/faceID /app/outputs && \
-    [ -f /app/enhancers/GFPGAN/GFPGANv1.4.onnx ] || wget -O /app/enhancers/GFPGAN/GFPGANv1.4.onnx "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gfpgan_1.4.onnx" && \
-    [ -f /app/utils/scrfd_2.5g_bnkps.onnx ] || wget -O /app/utils/scrfd_2.5g_bnkps.onnx "https://huggingface.co/OwlMaster/AllFilesRope/resolve/main/scrfd_2.5g_bnkps.onnx" && \
-    [ -f /app/faceID/recognition.onnx ] || wget -O /app/faceID/recognition.onnx "https://huggingface.co/manh-linh/faceID_recognition/resolve/main/recognition.onnx"
+    if [ ! -f /app/enhancers/GFPGAN/GFPGANv1.4.onnx ]; then \
+        wget -O /app/enhancers/GFPGAN/GFPGANv1.4.onnx "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gfpgan_1.4.onnx"; \
+    fi && \
+    if [ ! -f /app/utils/scrfd_2.5g_bnkps.onnx ]; then \
+        wget -O /app/utils/scrfd_2.5g_bnkps.onnx "https://huggingface.co/OwlMaster/AllFilesRope/resolve/main/scrfd_2.5g_bnkps.onnx"; \
+    fi && \
+    if [ ! -f /app/faceID/recognition.onnx ]; then \
+        wget -O /app/faceID/recognition.onnx "https://huggingface.co/manh-linh/faceID_recognition/resolve/main/recognition.onnx"; \
+    fi
 
-ENV PYTHONPATH="/app"
+# Thiết lập biến môi trường CUDA (nếu cần)
+ENV CUDA_VISIBLE_DEVICES=0
+ENV PYTHONUNBUFFERED=1
 
+# Lệnh mặc định khi chạy container (có thể thay đổi tùy mục đích)
 CMD ["python", "rp_handler.py"]
